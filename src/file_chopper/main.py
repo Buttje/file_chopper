@@ -20,6 +20,10 @@ from file_chopper.chopper import (
     join,
     parse_size,
 )
+from file_chopper.segmenter import (
+    SegmentStatus,
+    segment_document,
+)
 
 # ---------------------------------------------------------------------------
 # Optional progress bar (tqdm).  Falls back gracefully if not installed.
@@ -80,6 +84,9 @@ def _build_parser() -> argparse.ArgumentParser:
               Rejoin the pieces:
                   file_chopper join big_file.iso.part0001
 
+              Segment documents for Fess:
+                  file_chopper segment /data/docs --output-dir /output
+
               List how many parts a file will produce:
                   file_chopper chop big_file.iso --size 700MB --dry-run
             """
@@ -97,8 +104,9 @@ def _build_parser() -> argparse.ArgumentParser:
             Exit codes
             ──────────
               0   success
-              1   user error (bad arguments, file not found, …)
-              2   integrity error (checksum mismatch)
+              1   completed with errors (at least one file failed)
+              2   configuration/argument error
+              3   missing Python dependency
             """
         ),
     )
@@ -243,6 +251,79 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Skip SHA-256 integrity verification after reassembly.",
     )
     join_parser.add_argument(
+        "--quiet",
+        "-q",
+        action="store_true",
+        default=False,
+        help="Suppress progress output.",
+    )
+
+    # ---- segment ------------------------------------------------------------
+    seg_parser = subparsers.add_parser(
+        "segment",
+        help="Segment large documents for Fess filesystem crawl.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        description=textwrap.dedent(
+            """\
+            Split large source documents into smaller child documents and
+            prepare an output folder structure suitable for a Fess filesystem crawl.
+
+            Supported formats: .pdf .txt .csv .md .html .htm .docx .pptx .xlsx
+                               .odt .odp .ods .rtf
+
+            Out-of-scope formats (.doc .ppt .xls):
+              - If no split is required: copied unchanged (exit 0).
+              - If split is required:    marked as error (exit 1).
+
+            Examples
+            ────────
+              Segment all documents in /data/docs into /output:
+                  file_chopper segment /data/docs --output-dir /output
+
+              Segment a single file with custom limits:
+                  file_chopper segment report.docx --output-dir /output \\
+                      --max-size 5MB --max-chars 50000
+            """
+        ),
+    )
+    seg_parser.add_argument(
+        "source",
+        metavar="SOURCE",
+        help="Path to a file or directory to segment.",
+    )
+    seg_parser.add_argument(
+        "--output-dir",
+        "-o",
+        metavar="DIR",
+        required=True,
+        help="Directory where segmented output files are written.",
+    )
+    seg_parser.add_argument(
+        "--max-size",
+        metavar="SIZE",
+        default="10MB",
+        help=(
+            "Maximum size of each child document in bytes (default: 10MB).  "
+            "Splitting is triggered when the source exceeds this value."
+        ),
+    )
+    seg_parser.add_argument(
+        "--max-chars",
+        metavar="N",
+        type=int,
+        default=100_000,
+        help=(
+            "Maximum number of extracted text characters per child document "
+            "(default: 100000).  Splitting is triggered when the source exceeds this."
+        ),
+    )
+    seg_parser.add_argument(
+        "--fail-fast",
+        action="store_true",
+        default=False,
+        help="Stop processing after the first error.",
+    )
+    seg_parser.add_argument(
         "--quiet",
         "-q",
         action="store_true",
@@ -440,6 +521,74 @@ def _cmd_join(args: argparse.Namespace) -> int:
 
 
 # ---------------------------------------------------------------------------
+# Segment command handler
+# ---------------------------------------------------------------------------
+
+
+def _cmd_segment(args: argparse.Namespace) -> int:
+    source = Path(args.source)
+
+    try:
+        max_child_bytes = parse_size(args.max_size)
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
+        return 2
+
+    if args.max_chars <= 0:
+        print("Error: --max-chars must be a positive integer.", file=sys.stderr)
+        return 2
+
+    if not source.exists():
+        print(
+            f"Error: Source not found: '{source}'\n"
+            "Please check the path and try again.",
+            file=sys.stderr,
+        )
+        return 2
+
+    output_dir = Path(args.output_dir)
+
+    if source.is_dir():
+        from file_chopper.segmenter import segment_folder
+
+        results = segment_folder(
+            input_dir=source,
+            output_dir=output_dir,
+            max_child_bytes=max_child_bytes,
+            max_child_text_chars=args.max_chars,
+            fail_fast=args.fail_fast,
+        )
+    else:
+        result = segment_document(
+            source=source,
+            output_dir=output_dir,
+            max_child_bytes=max_child_bytes,
+            max_child_text_chars=args.max_chars,
+        )
+        results = [result]
+
+    errors = 0
+    missing_deps = 0
+    for result in results:
+        if result.status == SegmentStatus.OK:
+            if not args.quiet:
+                children_str = ", ".join(str(c) for c in result.children)
+                print(f"  OK  {result.source} -> [{children_str}]")
+        elif result.status == SegmentStatus.MISSING_DEP:
+            missing_deps += 1
+            print(f"Error (missing dependency): {result.error_msg}", file=sys.stderr)
+        else:
+            errors += 1
+            print(f"Error: {result.error_msg}", file=sys.stderr)
+
+    if missing_deps:
+        return 3
+    if errors:
+        return 1
+    return 0
+
+
+# ---------------------------------------------------------------------------
 # Main entry point
 # ---------------------------------------------------------------------------
 
@@ -455,7 +604,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     Returns
     -------
     int
-        Exit code (0 = success, 1 = user error, 2 = integrity error).
+        Exit code (0 = success, 1 = completed with errors,
+        2 = configuration/argument error, 3 = missing dependency).
     """
     parser = _build_parser()
     args = parser.parse_args(argv)
@@ -464,6 +614,8 @@ def main(argv: Optional[List[str]] = None) -> int:
         return _cmd_chop(args)
     if args.command == "join":
         return _cmd_join(args)
+    if args.command == "segment":
+        return _cmd_segment(args)
 
     parser.print_help()
     return 1
