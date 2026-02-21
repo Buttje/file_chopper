@@ -27,6 +27,12 @@ classifiers = [
 ]
 dependencies = [
     "tqdm>=4.64",
+    "pypdf>=4.0",
+    "python-docx>=1.0",
+    "python-pptx>=0.6",
+    "openpyxl>=3.1",
+    "odfpy>=1.4",
+    "striprtf>=0.0.26",
 ]
 
 [project.optional-dependencies]
