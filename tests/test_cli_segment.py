@@ -34,6 +34,7 @@ def large_txt_file(tmp_path: Path) -> Path:
 @pytest.fixture()
 def large_doc_file(tmp_path: Path) -> Path:
     p = tmp_path / "large.doc"
+    # OLE2 Compound File Binary (CFB) header signature used by legacy .doc files
     p.write_bytes(b"\xd0\xcf\x11\xe0" + b"X" * 20_000)
     return p
 

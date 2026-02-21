@@ -268,7 +268,8 @@ class TestExtractText:
     def test_missing_odfpy_raises_import_error(self, tmp_path: Path):
         p = tmp_path / "file.odt"
         p.write_bytes(b"PK")
-        with patch.dict("sys.modules", {"odf": None, "odf.opendocument": None, "odf.teletype": None, "odf.element": None}), pytest.raises(ImportError, match="odfpy"):
+        odf_modules = {"odf": None, "odf.opendocument": None, "odf.teletype": None, "odf.element": None}
+        with patch.dict("sys.modules", odf_modules), pytest.raises(ImportError, match="odfpy"):
             from file_chopper.segmenter import _extract_odf_text
 
             _extract_odf_text(p)
@@ -276,7 +277,8 @@ class TestExtractText:
     def test_missing_striprtf_raises_import_error(self, tmp_path: Path):
         p = tmp_path / "file.rtf"
         p.write_text(r"{\rtf1}", encoding="latin-1")
-        with patch.dict("sys.modules", {"striprtf": None, "striprtf.striprtf": None}), pytest.raises(ImportError, match="striprtf"):
+        striprtf_modules = {"striprtf": None, "striprtf.striprtf": None}
+        with patch.dict("sys.modules", striprtf_modules), pytest.raises(ImportError, match="striprtf"):
             from file_chopper.segmenter import _extract_rtf_text
 
             _extract_rtf_text(p)

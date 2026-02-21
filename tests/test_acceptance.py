@@ -22,6 +22,7 @@ from file_chopper.segmenter import SegmentStatus, segment_document
 
 def _make_doc_file(path: Path, size_bytes: int) -> Path:
     """Create a fake .doc file of *size_bytes* bytes."""
+    # OLE2 Compound File Binary (CFB) header signature used by legacy .doc files
     path.write_bytes(b"\xd0\xcf\x11\xe0" + b"X" * (size_bytes - 4))
     return path
 
